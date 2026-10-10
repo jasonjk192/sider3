@@ -5,6 +5,9 @@ CC=cl
 LINK=link
 RC=rc
 
+# Define the output directory
+OUTDIR=output
+
 !if "$(debug)"=="1"
 EXTRA_CFLAGS=/DDEBUG
 !else
@@ -14,12 +17,11 @@ EXTRA_CFLAGS=/DMYDLL_RELEASE_BUILD
 LPZLIB=soft\zlib123-dll\lib
 ZLIBDLL=soft\zlib123-dll\zlib1.dll
 
-# 4731: warning about ebp modification
-CFLAGS=/nologo /Od /EHsc /wd4731 $(EXTRA_CFLAGS)
+# Added /Fo$(OUTDIR)^\ to CFLAGS to force compiler to output .obj files into OUTDIR
+CFLAGS=/nologo /Od /EHsc /wd4731 /Fo$(OUTDIR)^\ $(EXTRA_CFLAGS)
 LFLAGS=/NOLOGO
-#LIBS=user32.lib gdi32.lib advapi32.lib comctl32.lib shell32.lib shlwapi.lib
 LIBS=user32.lib gdi32.lib comctl32.lib version.lib
-LIBSDLL=pngdib.obj libpng.a zdll.lib $(LIBS)
+LIBSDLL=$(OUTDIR)\pngdib.obj libpng.a zdll.lib $(LIBS)
 
 LUAINC=/I soft\LuaJIT-2.0.4\src
 LUALIBPATH=soft\LuaJIT-2.0.4\src
@@ -27,40 +29,50 @@ LUALIB=lua51.lib
 
 MAINC=/I soft\miniaudio
 
-all: sider.exe sider.dll
+# Ensure the output directory exists before compiling anything
+all: $(OUTDIR) $(OUTDIR)\sider.exe $(OUTDIR)\sider.dll
 
-sider.res: sider.rc
-	$(RC) -r -fo sider.res sider.rc
-sider_main.res: sider_main.rc sider.ico
-	$(RC) -r -fo sider_main.res sider_main.rc
+# Rule to create the output directory if it doesn't exist
+$(OUTDIR):
+	@if not exist $(OUTDIR) mkdir $(OUTDIR)
 
-audio.obj: audio.cpp audio.h sider.h common.h
-common.obj: common.cpp common.h
-gameplay.obj: gameplay.cpp gameplay.h patterns.h common.h sider.h imageutil.h
-gfx.obj: gfx.cpp gfx.h patterns.h common.h sider.h imageutil.h
-imageutil.obj: imageutil.cpp imageutil.h
-version.obj: version.cpp
+$(OUTDIR)\sider.res: sider.rc
+	$(RC) -r -fo $(OUTDIR)\sider.res sider.rc
+
+$(OUTDIR)\sider_main.res: sider_main.rc sider.ico
+	$(RC) -r -fo $(OUTDIR)\sider_main.res sider_main.rc
+
+# Track object dependencies inside the output folder
+$(OUTDIR)\audio.obj: audio.cpp audio.h sider.h common.h
+$(OUTDIR)\common.obj: common.cpp common.h
+$(OUTDIR)\trampoline.obj: trampoline.cpp trampoline.h
+$(OUTDIR)\gameplay.obj: gameplay.cpp gameplay.h patterns.h common.h sider.h imageutil.h
+$(OUTDIR)\gfx.obj: gfx.cpp gfx.h patterns.h common.h sider.h imageutil.h
+$(OUTDIR)\imageutil.obj: imageutil.cpp imageutil.h
+$(OUTDIR)\version.obj: version.cpp
+$(OUTDIR)\sider.obj: sider.cpp sider.h patterns.h common.h imageutil.h audio.h trampoline.h
+$(OUTDIR)\main.obj: main.cpp sider.h
+$(OUTDIR)\zlibtool.obj: zlibtool.cpp
 
 $(LUALIBPATH)\$(LUALIB):
 	cd $(LUALIBPATH) && msvcbuild.bat
 
-sider.obj: sider.cpp sider.h patterns.h common.h imageutil.h audio.h
-sider.dll: sider.obj imageutil.obj version.obj common.obj gameplay.obj gfx.obj audio.obj sider.res $(LUALIBPATH)\$(LUALIB)
-	$(LINK) $(LFLAGS) /out:sider.dll /DLL sider.obj imageutil.obj version.obj common.obj gameplay.obj gfx.obj audio.obj sider.res /LIBPATH:$(LUALIBPATH) $(LIBS) $(LUALIB) /LIBPATH:"$(LIB)"
+# Updated linker targets to use $(OUTDIR) paths
+$(OUTDIR)\sider.dll: $(OUTDIR)\sider.obj $(OUTDIR)\imageutil.obj $(OUTDIR)\version.obj $(OUTDIR)\common.obj $(OUTDIR)\trampoline.obj $(OUTDIR)\gameplay.obj $(OUTDIR)\gfx.obj $(OUTDIR)\audio.obj $(OUTDIR)\sider.res $(LUALIBPATH)\$(LUALIB)
+	$(LINK) $(LFLAGS) /out:$(OUTDIR)\sider.dll /DLL $(OUTDIR)\sider.obj $(OUTDIR)\imageutil.obj $(OUTDIR)\version.obj $(OUTDIR)\common.obj $(OUTDIR)\trampoline.obj $(OUTDIR)\gameplay.obj $(OUTDIR)\gfx.obj $(OUTDIR)\audio.obj $(OUTDIR)\sider.res /LIBPATH:$(LUALIBPATH) $(LIBS) $(LUALIB) /LIBPATH:"$(LIB)"
 
-sider.exe: main.obj sider.dll sider_main.res
-	$(LINK) $(LFLAGS) /out:sider.exe main.obj sider_main.res $(LIBS) sider.lib /LIBPATH:"$(LIB)"
+$(OUTDIR)\sider.exe: $(OUTDIR)\main.obj $(OUTDIR)\sider.dll $(OUTDIR)\sider_main.res
+	$(LINK) $(LFLAGS) /out:$(OUTDIR)\sider.exe $(OUTDIR)\main.obj $(OUTDIR)\sider_main.res $(LIBS) $(OUTDIR)\sider.lib /LIBPATH:"$(LIB)"
 
-zlibtool.obj: zlibtool.cpp
-zlibtool.exe: zlibtool.obj
-    $(LINK) $(LFLAGS) /out:zlibtool.exe zlibtool.obj /LIBPATH:$(LPZLIB) $(LIBS) zdll.lib
+$(OUTDIR)\zlibtool.exe: $(OUTDIR)\zlibtool.obj
+	$(LINK) $(LFLAGS) /out:$(OUTDIR)\zlibtool.exe $(OUTDIR)\zlibtool.obj /LIBPATH:$(LPZLIB) $(LIBS) zdll.lib
 
-.cpp.obj:
+# Custom inference rule to compile .cpp source file into $(OUTDIR)\filename.obj
+{}.cpp{$(OUTDIR)}.obj:
 	$(CC) $(CFLAGS) -c $(INC) $(LUAINC) $(MAINC) $<
 
 clean:
-	del *.obj *.dll *.exp *.res *.lib *.exe *~
+	if exist $(OUTDIR) rmdir /s /q $(OUTDIR)
 
 clean-all: clean
-    cd $(LUALIBPATH) && del /Q lua51.exp lua51.lib lua51.dll luajit.exe
-
+	cd $(LUALIBPATH) && del /Q lua51.exp lua51.lib lua51.dll luajit.exe

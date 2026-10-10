@@ -377,5 +377,19 @@ static BYTE reflection_pattern[30] =
     "\xf3\x0f\x10\x1d";
 static int reflection_off = 29;
 
+/////////////////////// Additional patterns /////////////////////
+
+//static BYTE team_player_pattern[] =
+//    "\x8B\x8C\xC6\xF8\x00\x00\x00"
+//    "\x8B\x94\xC6\xFC\x00\x00\x00"
+//    "\x8A\x9C\x30\x00\x02\x00\x00";
+//static int team_player_off = 14;
+
+static BYTE early_team_data_pattern[] =
+"\x8B\x78\x34"
+"\x0F\xB6\x5D\x0C"
+"\x8D\x8D\xF4\xFF\xFF\xFF";
+static int early_team_data_off = 0x37;
+
 #endif
 

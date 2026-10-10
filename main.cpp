@@ -11,15 +11,32 @@ HHOOK handle;
 HWND hWnd;
 DWORD hookThreadId;
 
+HWND heightLabel;
+const wchar_t* currentStatus = L"Sider: Waiting for hook...";
+
 bool _inited(false);
 
 int init();
+
+void UpdateStatus(const wchar_t* newText) 
+{
+    currentStatus = newText;
+    if (heightLabel)
+        SetWindowText(heightLabel, currentStatus);
+}
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch(uMsg)
     {
-        case WM_DESTROY:
+        case SIDER_MSG_ATTACH:
+            if (wParam == SIDER_MSG_STATUS)
+            {
+                UpdateStatus(L"Sider: Attached to PES 2017.");
+            } 
+            break;
+
+        case WM_DESTROY: 
         case SIDER_MSG_EXIT:
             // Exit the application when the window closes
             unsetHook();
@@ -61,6 +78,62 @@ bool InitApp(HINSTANCE hInstance, LPSTR lpCmdLine)
     return true;
 }
 
+bool LaunchGame()
+{
+    wstring path = game_exe_path();
+
+    if (path.empty()) {
+        log_(L"Main: Cannot launch game: executable path is empty.\n");
+        return false;
+    }
+
+    // Use the game's directory as its working directory.
+    wstring workingDir;
+    size_t pos = path.find_last_of(L"\\/");
+
+    if (pos != wstring::npos) {
+        workingDir = path.substr(0, pos);
+    }
+
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+
+    PROCESS_INFORMATION pi = {};
+
+    BOOL success = CreateProcessW(
+        path.c_str(),                   // Application path
+        nullptr,                        // No additional command line
+        nullptr,                        // Process security
+        nullptr,                        // Thread security
+        FALSE,                          // Do not inherit handles
+        0,                              // Creation flags
+        nullptr,                        // Inherit environment
+        workingDir.empty()
+        ? nullptr
+        : workingDir.c_str(),       // Working directory
+        &si,
+        &pi
+    );
+
+    if (!success) {
+        DWORD error = GetLastError();
+
+        log_(L"Main: Failed to launch game. Error: %lu\n", error);
+        UpdateStatus(L"Error: Could not launch PES 2017.");
+        return false;
+    }
+
+    log_(L"Main: PES 2017 launched successfully.\n");
+
+    // We don't need to retain these handles.
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    UpdateStatus(L"Sider: PES 2017 launched.");
+
+    return true;
+}
+
 HWND BuildWindow(int nCmdShow)
 {
     DWORD style, xstyle;
@@ -75,7 +148,7 @@ HWND BuildWindow(int nCmdShow)
         style,
         CW_USEDEFAULT,  // initial x coordinate
         CW_USEDEFAULT,  // initial y coordinate
-        210, 70,   // width and height of the window
+        240, 90,   // width and height of the window
         NULL,           // no parent window.
         NULL,           // no menu
         NULL,           // no creator
@@ -85,9 +158,9 @@ HWND BuildWindow(int nCmdShow)
 
     xstyle = WS_EX_LEFT;
     style = WS_CHILD | WS_VISIBLE;
-    HWND heightLabel = CreateWindowEx(
+    heightLabel = CreateWindowEx(
             xstyle, L"Static", 
-            L"Sider for Pro Evolution Soccer 2017", style,
+            currentStatus, style,
             10, 10, 200, 50, 
             retval, NULL, NULL, NULL);
 
@@ -102,6 +175,7 @@ HWND BuildWindow(int nCmdShow)
     else {
         ShowWindow(retval,nCmdShow);
     }
+
     return retval; // return its handle for future use.
 }
 
@@ -126,6 +200,10 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     if (!_inited) {
         _inited = true;
         init();
+
+        if (autorun_game()) {
+            LaunchGame();
+        }
     }
 
     //SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
@@ -151,7 +229,25 @@ int init()
     version.reserve(64);
     get_module_version(NULL,version);
     start_log_(L"Sider: version %s\n", version.c_str());
-    setHook();
-    log_(L"Main: Init DONE\n");
+    bool hookSuccess = setHook();
+    if (hookSuccess) 
+    {
+        UpdateStatus(L"Sider: hook set up. Please run PES2017...");
+        log_(L"Main: Init DONE - Hook active\n");
+    }
+    else
+    {
+        // Check if PES2017 is running to give a precise error message about Admin rights
+        HWND hwndGame = FindWindow(NULL, L"Pro Evolution Soccer 2017"); // or check process list
+        if (hwndGame != NULL) 
+        {
+            UpdateStatus(L"Error: PES 2017 running as Admin? Run Sider as Admin!");
+            log_(L"Main: Hook failed. Possible permission mismatch (Administrator elevation required).\n");
+        }
+        else 
+        {
+            UpdateStatus(L"Status: Waiting for PES 2017 process...");
+        }
+    }
 	return 0;
 }

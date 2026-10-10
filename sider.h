@@ -8,14 +8,18 @@ using namespace std;
 #define SIDER_FM L"Local\\sider-3"
 
 #define SIDERCLS L"SIDERCLS"
-#define SIDER_MSG_EXIT WM_USER + 1
+#define SIDER_MSG_STATUS 1
+#define SIDER_MSG_ATTACH WM_USER + 1
+#define SIDER_MSG_EXIT WM_USER + 2
 
-__declspec(dllexport) void setHook();
+__declspec(dllexport) bool setHook();
 __declspec(dllexport) void unsetHook();
 __declspec(dllexport) void log_(const wchar_t *format, ...);
 __declspec(dllexport) void logu_(const char *format, ...);
 __declspec(dllexport) void start_log_(const wchar_t *format, ...);
 __declspec(dllexport) void get_module_version(HMODULE, wstring&);
 __declspec(dllexport) bool start_minimized();
+__declspec(dllexport) bool autorun_game();
+__declspec(dllexport) wstring game_exe_path();
 
 #endif
