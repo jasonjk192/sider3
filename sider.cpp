@@ -45,6 +45,7 @@ void team_ids_read_cp();
 void team_info_write_cp();
 
 void early_team_data_cp();
+void early_team_data_tourney_cp();
 
 void minutes_set_cp();
 void set_defaults_cp();
@@ -384,6 +385,8 @@ static DWORD _team_info_write_org = 0;
 
 static void* _early_team_data_trampoline_addr = nullptr;
 static DWORD _early_team_data_org = 0;
+
+static DWORD _early_team_data_tourney_org = 0;
 
 struct PlayerSlot {
 	uint32_t team_id_encoded;
@@ -1720,6 +1723,21 @@ bool _install_func(IMAGE_SECTION_HEADER* h) {
 		}
 	}
 
+	// early team data (tourneys)
+	{
+		BYTE* p = find_code_frag(base, h->Misc.VirtualSize, early_team_data_tourney_pattern, sizeof(early_team_data_tourney_pattern) - 1);
+		if (!p) {
+			log_(L"Unable to patch: (early team data tourney) pattern not matched\n");
+		}
+		else {
+			log_(L"early team data tourney pattern found at offset: %08x (%08x)\n", (p - base), p);
+
+			p += early_team_data_tourney_off;
+			_early_team_data_tourney_org = get_target_addr((DWORD)p);
+			hook_call_point((DWORD)p, early_team_data_tourney_cp, 0, 0);
+		}
+	}
+
 	// num minutes
 	{
 		BYTE* p = find_code_frag(base, h->Misc.VirtualSize,
@@ -2365,7 +2383,7 @@ void module_set_away(module_t* m, DWORD team_id)
 	}
 }
 
-void module_set_early_team_data(module_t* m, DWORD team_id, bool is_away, const std::vector<DWORD>& player_ids)
+void module_set_early_team_data(module_t* m, DWORD base_struct_ptr, DWORD team_id, bool is_away, const std::vector<DWORD>& player_ids)
 {
 	if (m->evt_set_early_team_data != 0) {
 		EnterCriticalSection(&_cs);
@@ -2373,6 +2391,7 @@ void module_set_early_team_data(module_t* m, DWORD team_id, bool is_away, const 
 		//lua_xmove(m->L, L, 1);
 		// push params
 		lua_pushvalue(m->L, 1); // ctx
+		lua_pushinteger(m->L, base_struct_ptr);
 		lua_pushinteger(m->L, team_id);
 		lua_pushboolean(m->L, is_away);
 		lua_newtable(m->L);
@@ -2381,7 +2400,7 @@ void module_set_early_team_data(module_t* m, DWORD team_id, bool is_away, const 
 			lua_rawseti(m->L, -2, i + 1); // Lua indices are 1-based
 		}
 
-		if (lua_pcall(m->L, 4, 0, 0) != LUA_OK) {
+		if (lua_pcall(m->L, 5, 0, 0) != LUA_OK) {
 			const char* err = luaL_checkstring(m->L, -1);
 			logu_("[%d] lua ERROR: %s\n", GetCurrentThreadId(), err);
 			lua_pop(m->L, 1);
@@ -3756,15 +3775,15 @@ void team_info_write_cp()
 
 void early_team_data(DWORD base_struct_ptr, DWORD is_away, DWORD team_id_encoded)
 {
-	DWORD team_id = (team_id_encoded >> 0x0e) & 0xffff;
+	DWORD team_id = (team_id_encoded >> 0x0e) & 0xffff; // decode team id
 
-	uint8_t* array_start = (uint8_t*)(base_struct_ptr + 0xF8);
+	uint8_t* array_start = (uint8_t*)(base_struct_ptr + 0xF8); // start of players array (only IDs, not actual player data)
 	std::vector<DWORD> player_ids;
 
 	for (int i = 0; i < 32; i++) {
 		// Each entry is 8 bytes: [4 bytes Team ID] [4 bytes Player ID]
-		DWORD* entry_team = (DWORD*)(array_start + (i * 8));
-		DWORD* entry_player = (DWORD*)(array_start + (i * 8) + 4);
+		DWORD* entry_team = (DWORD*)(array_start + (i * 8)); // we don't need this; probably shouldn't use it either. Haven't really understood what it really used for
+		DWORD* entry_player = (DWORD*)(array_start + (i * 8) + 4); // what we actually want!
 
 		// Check for empty/zeroed slots (PES zero-pads unused slots)
 		if (*entry_player == 0 || *entry_player == 0xFFFFFFFF) {
@@ -3778,9 +3797,23 @@ void early_team_data(DWORD base_struct_ptr, DWORD is_away, DWORD team_id_encoded
 		list<module_t*>::iterator i;
 		for (i = _modules.begin(); i != _modules.end(); i++) {
 			module_t* m = *i;
-			module_set_early_team_data(m, team_id, (is_away != 0), player_ids);
+			module_set_early_team_data(m, base_struct_ptr, team_id, (is_away != 0), player_ids);
 		}
 	}
+}
+
+void early_team_data_tourney(DWORD early_struct_ptr)
+{
+	// early_struct_ptr is an address to an earlier point before the actual team struct data
+	// Note that what we are looking at is the home and away teams only. Meaning that this is possibly only copied data from the actual team database
+
+	DWORD base_struct_ptr = early_struct_ptr + 0xF4; // this offset seems to be constant
+	DWORD team_id_encoded = *(DWORD*)(base_struct_ptr); // 1st 4 bytes is the team_id_encoded
+	early_team_data(base_struct_ptr, false, team_id_encoded); // the 1st set is seemingly always home team
+
+	base_struct_ptr += 0x520; // away team is always this many bytes from the home team
+	team_id_encoded = *(DWORD*)(base_struct_ptr);
+	early_team_data(base_struct_ptr, true, team_id_encoded); // the 2nd set is seemingly always away team
 }
 
 NAKED_HOOK(early_team_data_cp)
@@ -3802,6 +3835,21 @@ NAKED_HOOK(early_team_data_cp)
 	}
 }
 
+NAKED_HOOK(early_team_data_tourney_cp)
+{
+	__asm {
+		pushfd
+		pushad
+		// push registers
+		push ecx // structure pointer
+		call early_team_data_tourney
+		add esp, 0x04
+		popad
+		popfd
+
+		jmp _early_team_data_tourney_org
+	}
+}
 
 DWORD minutes_set(DWORD settings_addr, DWORD num_minutes)
 {
